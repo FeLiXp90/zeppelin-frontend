@@ -210,7 +210,7 @@ router.beforeEach((to, from, next) => {
       return next(from.fullPath || '/')
   }
   
-  document.title = `Vue.js ${to.meta.title} | TailAdmin - Vue.js Tailwind CSS Dashboard Template`
+  document.title = `${to.meta.title} | Zeppelin Solution`
   next()
   
 })

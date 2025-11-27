@@ -137,7 +137,7 @@
         <input
           v-model="url"
           type="url"
-          placeholder="www.tailadmin.com"
+          placeholder="www.zeppelin-solution.com"
           class="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-300 bg-transparent px-4 py-2.5 pl-[90px] text-sm text-gray-800 shadow-theme-xs placeholder:text-gray-400 focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:placeholder:text-white/30 dark:focus:border-brand-800"
         />
       </div>
@@ -189,7 +189,7 @@ const selectedCountry2 = ref('US')
 const phoneNumber = ref('')
 const phoneNumber2 = ref('')
 const url = ref('')
-const website = ref('www.tailadmin.com')
+const website = ref('www.zeppelin-solution.com')
 const copyText = ref('Copy')
 
 const countryCodes = {
