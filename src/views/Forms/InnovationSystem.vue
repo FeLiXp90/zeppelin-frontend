@@ -5,7 +5,7 @@
     <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
       <div class="space-y-6">
         <ComponentCard :title="pageTitle">
-          <div class="space-y-4 dark:text-white ">
+          <div class="space-y-4 dark:text-white">
             <QuestionItem
               v-for="q in left"
               :key="q.id"
@@ -31,8 +31,12 @@
         </ComponentCard>
 
         <div class="flex justify-end">
-          <button class="px-4 py-2 bg-brand-950  text-white rounded-lg hover:bg-brand-900" @click="submit">
-            salvar
+          <button 
+            class="px-4 py-2 bg-brand-950 text-white rounded-lg hover:bg-brand-900"
+            @click="submit"
+            :disabled="isLoading"
+          >
+            {{ isLoading ? 'Salvando...' : 'Salvar' }}
           </button>
         </div>
       </div>
@@ -48,11 +52,190 @@ import QuestionItem from './QuestionItem.vue'
 
 import QUESTIONS from '@/data/innovation_system.json'
 import { useQuestionnaire } from '@/composables/useQuestionnaire'
+import { api } from '@/services/api'
+import { ref, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
 
 const pageTitle = 'R&D as Innovation System'
 const { answers, left, right, dump } = useQuestionnaire(QUESTIONS as any)
+const auth = useAuthStore()
+const isLoading = ref(false)
 
-function submit() {
-  console.log('innovation system answers:', dump())
+/* =========================
+   mapeamento fixo dos níveis de adoção
+========================= */
+const ADOPTION_LEVEL_MAPPING: Record<string, number> = {
+  'Not adopted': 1,
+  'Abandoned': 2,
+  'Project / Product': 3,
+  'Process': 4,
+  'Institutionalized': 5,
 }
+
+/* =========================
+   statement code -> id
+========================= */
+const statementMap = ref<Record<string, number>>({})
+
+const loadStatements = async () => {
+  const token = localStorage.getItem('access_token')
+  if (!token) return
+
+  let page = 1
+  let totalPages = 1
+  const allStatements: any[] = []
+
+  const first = await api.get('/questionnaire/statement/', {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { page, per_page: 100 }
+  })
+
+  allStatements.push(...first.data.data)
+  if (first.data.meta) {
+    totalPages = Math.ceil(first.data.meta.total / first.data.meta.per_page)
+  }
+
+  for (page = 2; page <= totalPages; page++) {
+    const res = await api.get('/questionnaire/statement/', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, per_page: 100 }
+    })
+    allStatements.push(...res.data.data)
+  }
+
+  allStatements.forEach((s: any) => {
+    statementMap.value[s.code] = s.id
+  })
+}
+
+/* =========================
+   busca o employee logado e organização
+========================= */
+const getEmployeeData = async (): Promise<{ employeeId: number; organizationId: number } | null> => {
+  const token = localStorage.getItem('access_token')
+  const email = auth.user?.email
+  if (!token || !email) return null
+
+  let page = 1
+  let totalPages = 1
+  let employees: any[] = []
+
+  const first = await api.get('/employee/employee/', { headers: { Authorization: `Bearer ${token}` }, params: { page } })
+  employees.push(...first.data.data)
+
+  if (first.data.meta) {
+    totalPages = Math.ceil(first.data.meta.total / first.data.meta.per_page)
+  }
+
+  for (page = 2; page <= totalPages; page++) {
+    const res = await api.get('/employee/employee/', { headers: { Authorization: `Bearer ${token}` }, params: { page } })
+    employees.push(...res.data.data)
+  }
+
+  const employee = employees.find((e: any) => e.e_mail?.toLowerCase() === email.toLowerCase())
+  if (!employee) return null
+
+  return { employeeId: employee.id, organizationId: employee.employee_organization.id }
+}
+
+/* =========================
+   busca questionário existente do employee
+========================= */
+const getEmployeeQuestionnaireId = async (employeeId: number): Promise<number | null> => {
+  const token = localStorage.getItem('access_token')
+  if (!token) return null
+
+  try {
+    const res = await api.get('/questionnaire/questionnaire/', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { per_page: 1000 }
+    })
+    const questionnaires = res.data?.data || []
+    const found = questionnaires.find((q: any) => q.employee_questionnaire_id === employeeId)
+    return found?.id ?? null
+  } catch (err) {
+    console.error('Erro ao buscar questionário do employee:', err)
+    return null
+  }
+}
+
+/* =========================
+   submit final
+========================= */
+const submit = async () => {
+  try {
+    console.log('🚀 Iniciando envio do questionário')
+    isLoading.value = true
+
+    const token = localStorage.getItem('access_token')
+    const headers = { Authorization: `Bearer ${token}` }
+
+    console.log('🔍 Buscando dados do employee logado...')
+    const employeeData = await getEmployeeData()
+    if (!employeeData) {
+      console.error('❌ Employee não encontrado')
+      alert('employee nao encontrado')
+      return
+    }
+    console.log('✅ Employee encontrado:', employeeData)
+
+    console.log('📄 Verificando/criando questionnaire...')
+    const questionnaireId = await getEmployeeQuestionnaireId(employeeData.employeeId)
+    console.log('Questionnaire ID:', questionnaireId)
+
+    const answersData = dump()
+    console.log('📊 Respostas coletadas do frontend:', answersData)
+
+    for (const code in answersData) {
+      const answer = answersData[code]
+      const statementId = statementMap.value[code]
+      const adoptedLevelId = ADOPTION_LEVEL_MAPPING[answer.adoption]
+
+      console.log('----------------------------')
+      console.log(`Preparando payload para a questão ${code}`)
+      console.log('Resposta selecionada:', answer.adoption)
+      console.log('Comentário:', answer.comment)
+      console.log('Mapped statementId:', statementId)
+      console.log('Mapped adoptedLevelId:', adoptedLevelId)
+      console.log('OrganizationId:', employeeData.organizationId)
+
+      if (!statementId || !adoptedLevelId) {
+        console.warn(`⚠️ Ignorando questão ${code}, ID não encontrado`)
+        continue
+      }
+
+      const payload: any = {
+        statement_answer: statementId,
+        adopted_level_answer: adoptedLevelId,
+        organization_answer: employeeData.organizationId,
+        comment_answer: answer.comment || ''
+      }
+      if (questionnaireId) payload.questionnaire_answer = questionnaireId
+
+      console.log('Payload enviado:', payload)
+
+      try {
+        const res = await api.post('/questionnaire/answer/', payload, { headers })
+        console.log('✅ Resposta salva com sucesso:', res.data)
+      } catch (err: any) {
+        console.error('❌ Erro ao salvar resposta:', err.response?.data || err.message)
+      }
+    }
+
+    alert('questionario salvo com sucesso')
+  } catch (err: any) {
+    console.error(err)
+    alert('erro ao salvar questionario')
+  } finally {
+    isLoading.value = false
+  }
+}
+
+/* =========================
+   lifecycle
+========================= */
+onMounted(async () => {
+  await loadStatements()
+  console.log('📌 statementMap completo:', statementMap.value)
+})
 </script>
